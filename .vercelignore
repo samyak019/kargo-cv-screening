@@ -1,0 +1,14 @@
+# Never upload candidate data or local tooling
+cvs/
+results.csv
+evidence.json
+report.html
+ratings.csv
+deploy/
+.venv/
+tests/
+.pytest_cache/
+__pycache__/
+kargo_pm_spm_rubric.txt
+ratings.example.csv
+README.md

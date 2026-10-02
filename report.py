@@ -1,0 +1,476 @@
+"""Render results.csv + evidence.json as a self-contained report.html.
+
+  python report.py                 # rebuild report.html from the last run (no API calls)
+
+The page has a candidate table (PM / SPM score, band and rank) and a detail
+view per candidate with every criterion's verified quotes, the quotes that
+were dropped and why, the facts behind G1 / R1-R4 / F1-F2, and the brief.
+"""
+import csv
+import html
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+
+import rubric
+from rubric import ROLES
+
+BETTER_FIT_GAP = 10.0  # points; below this neither role is called the better fit
+
+
+def build_data(rows: List[dict], evidence: Dict[str, dict]) -> List[dict]:
+    candidates: Dict[str, dict] = {}
+    for row in rows:
+        c = candidates.setdefault(row["file"], {"name": row["candidate"], "file": row["file"], "roles": {}})
+        role = ROLES[row["role"]]
+        ev = evidence.get(row["file"], {}).get(role.key, {})
+        if ev.get("_facts"):
+            c["name"] = row["candidate"]
+        c["roles"][role.key] = {
+            "total": float(row["total"]) if row.get("total") else None,
+            "route": row["route"],
+            "reason": row.get("route_reason", ""),
+            "rules": [r for r in row.get("rules_fired", "").split(";") if r],
+            "flags": [f for f in row.get("flags", "").split(";") if f],
+            "g1": row.get("g1") == "Y",
+            "error": row.get("error", ""),
+            "brief": ev.get("_brief", ""),
+            "facts": ev.get("_facts", {}),
+            "criteria": [
+                {"id": crit.id, "name": crit.name, "weight": crit.weight,
+                 **{k: ev.get(crit.id, {}).get(k) for k in ("score", "model_score", "reason")},
+                 "evidence": ev.get(crit.id, {}).get("evidence", []),
+                 "dropped": ev.get(crit.id, {}).get("dropped", [])}
+                for crit in role.criteria
+            ],
+        }
+
+    out = list(candidates.values())
+    for key in ROLES:
+        scored = sorted((c for c in out if c["roles"].get(key, {}).get("total") is not None),
+                        key=lambda c: -c["roles"][key]["total"])
+        for i, c in enumerate(scored, 1):
+            c["roles"][key]["rank"] = i
+
+    for c in out:
+        pm, spm = (c["roles"].get(k, {}).get("total") for k in ("PM", "SPM"))
+        c["better_fit"] = ""
+        if pm is not None and spm is not None and abs(pm - spm) >= BETTER_FIT_GAP:
+            c["better_fit"] = "PM" if pm > spm else "SPM"
+        c["best"] = max((t for t in (pm, spm) if t is not None), default=-1)
+    out.sort(key=lambda c: -c["best"])
+    return out
+
+
+def page_payload(data: List[dict], api: bool = False) -> dict:
+    return {
+        "candidates": data,
+        "roles": {k: r.title for k, r in ROLES.items()},
+        "lines": {"advance": rubric.ADVANCE_LINE, "reject": rubric.REJECT_LINE},
+        "api": api,
+    }
+
+
+def _embed(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
+
+def render_app(out_path: Path) -> Path:
+    """The hosted page (public/index.html): same template, data loaded from /api."""
+    page = TEMPLATE.replace("__META__", "").replace("__DATA__", _embed(page_payload([], api=True)))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(page, encoding="utf-8")
+    return out_path
+
+
+def render(rows: List[dict], evidence: Dict[str, dict], out_path: Path, model: str = "") -> Path:
+    data = build_data(rows, evidence)
+    payload = _embed(page_payload(data))
+    meta = " · ".join(x for x in (
+        f"{len(data)} candidate{'s' if len(data) != 1 else ''}",
+        html.escape(model) if model else "",
+        datetime.now().strftime("%d %b %Y, %H:%M"),
+    ) if x)
+    out_path.write_text(TEMPLATE.replace("__META__", meta).replace("__DATA__", payload), encoding="utf-8")
+    return out_path
+
+
+def main(argv=None) -> int:
+    import argparse
+
+    here = Path(__file__).resolve().parent
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", type=Path, default=here, help="folder holding results.csv / evidence.json")
+    ap.add_argument("--model", default="")
+    ap.add_argument("--app", type=Path, metavar="PATH",
+                    help="write the hosted app page (e.g. public/index.html) instead of a report")
+    args = ap.parse_args(argv)
+    if args.app:
+        print(f"Wrote {render_app(args.app)}")
+        return 0
+    results, ev = args.out / "results.csv", args.out / "evidence.json"
+    if not results.exists():
+        print(f"{results} not found - run screen.py first", file=sys.stderr)
+        return 1
+    with open(results) as f:
+        rows = list(csv.DictReader(f))
+    evidence = json.loads(ev.read_text()) if ev.exists() else {}
+    print(f"Wrote {render(rows, evidence, args.out / 'report.html', args.model)}")
+    return 0
+
+
+TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kargo Screening Report</title>
+<style>
+:root{
+  --bg:#0a0a0a; --panel:#141414; --panel-2:#1b1b1b; --line:#262626; --line-2:#333;
+  --text:#ededed; --muted:#a1a1a1; --faint:#6b6b6b;
+  --glow:#5eead4;
+  --adv-fg:#6ee7a8; --adv-bg:rgba(34,197,94,.12); --adv-bd:rgba(34,197,94,.35);
+  --rev-fg:#fcd34d; --rev-bg:rgba(234,179,8,.12); --rev-bd:rgba(234,179,8,.38);
+  --rej-fg:#fca5a5; --rej-bg:rgba(239,68,68,.12); --rej-bd:rgba(239,68,68,.38);
+  --quote:#d4d4d4;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+.hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line);
+  padding:56px 0 64px;text-align:center;
+  background:
+    radial-gradient(40% 70% at 50% 110%, rgba(94,234,212,.55), transparent 70%),
+    radial-gradient(18% 90% at 42% 100%, rgba(94,234,212,.25), transparent 70%),
+    radial-gradient(18% 90% at 58% 100%, rgba(94,234,212,.25), transparent 70%),
+    linear-gradient(#000, #070909)}
+.chip{display:inline-block;font-size:12px;color:var(--muted);border:1px solid var(--line-2);
+  border-radius:999px;padding:3px 12px;background:rgba(255,255,255,.03)}
+.hero h1{font-size:clamp(28px,5vw,44px);line-height:1.12;letter-spacing:-.02em;margin:18px auto 14px;max-width:720px}
+.hero p{color:var(--muted);max-width:600px;margin:0 auto;font-size:15px}
+.hero .meta{margin-top:22px;font-size:12px;color:var(--faint)}
+main{padding:28px 0 64px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.how b{color:var(--text)}
+.how{color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:12px;font-size:12px;color:var(--faint);align-items:center}
+.legend span.item{display:inline-flex;gap:8px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:12px;border-radius:999px;padding:2px 10px;
+  border:1px solid;white-space:nowrap;font-weight:500}
+.pill.ADVANCE{color:var(--adv-fg);background:var(--adv-bg);border-color:var(--adv-bd)}
+.pill.REVIEW{color:var(--rev-fg);background:var(--rev-bg);border-color:var(--rev-bd)}
+.pill.REJECT{color:var(--rej-fg);background:var(--rej-bg);border-color:var(--rej-bd)}
+.pill .rk{opacity:.75}
+.tag{display:inline-block;font-size:11px;color:var(--muted);border:1px solid var(--line-2);border-radius:6px;padding:1px 6px;margin:2px 4px 0 0}
+.tag.warn{color:var(--rev-fg);border-color:var(--rev-bd)}
+.table{margin-top:20px;padding:0;overflow:hidden}
+.tscroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:720px}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;
+  text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--text)}
+th .dir{opacity:.6;margin-left:4px}
+td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr{cursor:pointer;transition:background .12s}
+tbody tr:hover{background:var(--panel-2)}
+tbody tr:last-child td{border-bottom:0}
+.name{font-weight:500}
+.sub{font-size:12px;color:var(--faint)}
+.num{font-variant-numeric:tabular-nums}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+/* detail */
+.topbar{position:sticky;top:0;z-index:2;background:rgba(10,10,10,.85);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line)}
+.topbar .wrap{display:flex;align-items:center;height:52px;gap:12px}
+.back{color:var(--muted);text-decoration:none;font-size:13px;min-width:70px}
+.back:hover{color:var(--text)}
+.topbar h2{flex:1;text-align:center;font-size:14px;margin:0}
+.topbar .spacer{min-width:70px}
+.detail{max-width:840px;margin:0 auto;padding:24px 20px 64px;display:grid;gap:16px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:640px){.row2{grid-template-columns:1fr}}
+.sc-head{display:flex;justify-content:space-between;align-items:center}
+.sc-role{font-weight:600}
+.big{font-size:34px;font-weight:700;letter-spacing:-.02em;margin:8px 0 2px;font-variant-numeric:tabular-nums}
+.big small{font-size:14px;color:var(--faint);font-weight:500}
+.bar{position:relative;height:6px;border-radius:99px;background:var(--line);margin:10px 0 12px}
+.bar i{position:absolute;inset:0 auto 0 0;border-radius:99px;background:var(--muted)}
+.bar.ADVANCE i{background:var(--adv-fg)} .bar.REVIEW i{background:var(--rev-fg)} .bar.REJECT i{background:var(--rej-fg)}
+.bar b{position:absolute;top:-3px;width:1px;height:12px;background:var(--faint)}
+.why{font-size:12px;color:var(--muted)}
+.why div{margin-top:2px}
+.why div::before{content:"· ";color:var(--faint)}
+h3{font-size:14px;margin:0 0 12px}
+.brief p{margin:0 0 10px;color:#d4d4d4}
+.brief .role-l{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+.facts{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--faint);margin-top:4px}
+.facts b{color:var(--muted);font-weight:500}
+.crit{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px}
+.crit-h{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.crit-h .t{font-weight:500}
+.crit-h .t .id{color:var(--faint);margin-right:6px;font-variant-numeric:tabular-nums}
+.crit-h .m{font-size:12px;color:var(--faint);white-space:nowrap}
+.crit-h .m b{color:var(--text)}
+.dots{display:inline-flex;gap:3px;vertical-align:middle;margin-right:6px}
+.dots i{width:7px;height:7px;border-radius:2px;background:var(--line-2)}
+.dots i.on{background:var(--glow)}
+.reason{color:var(--muted);font-size:13px;margin:6px 0 0}
+.q{margin:8px 0 0;padding:6px 10px;border-left:2px solid var(--glow);background:rgba(94,234,212,.05);
+  color:var(--quote);font-size:13px;border-radius:0 6px 6px 0}
+.dropped{margin-top:8px;font-size:12px;color:var(--faint)}
+.dropped s{color:var(--faint)}
+.err{color:var(--rej-fg);font-size:13px}
+.flag{color:var(--rev-fg)}
+.actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+.btn{font:inherit;font-size:14px;border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid var(--line-2);
+  background:rgba(255,255,255,.04);color:var(--text)}
+.btn:hover{background:rgba(255,255,255,.09)}
+.btn.primary{background:#fff;color:#000;border-color:#fff;font-weight:500}
+.btn.primary:hover{background:#e5e5e5}
+.btn.danger{color:var(--rej-fg);border-color:var(--rej-bd)}
+.btn:disabled{opacity:.5;cursor:default}
+.access{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.access input{font:inherit;background:var(--bg);color:var(--text);border:1px solid var(--line-2);border-radius:8px;
+  padding:7px 10px;min-width:200px}
+.queue{margin-top:16px}
+.queue .it{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.queue .it:first-of-type{border-top:0}
+.queue .st{color:var(--muted);text-align:right}
+.queue .st.ok{color:var(--adv-fg)} .queue .st.bad{color:var(--rej-fg)} .queue .st.busy{color:var(--rev-fg)}
+.drop{outline:2px dashed var(--glow);outline-offset:-8px}
+@media (max-width:640px){.crit-h{flex-direction:column;gap:2px}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(function(){
+  var D = JSON.parse(document.getElementById('data').textContent);
+  var C = D.candidates, ROLES = Object.keys(D.roles);
+  var app = document.getElementById('app');
+  var BAND = {"ADVANCE":["ADVANCE","Advance"],"HUMAN REVIEW":["REVIEW","Review"],"REJECT":["REJECT","Reject"]};
+  var sort = {key:"best", dir:-1};
+  var APP = !!D.api, queue = [], loadError = '', loaded = !APP;
+  function getCode(){ try { return localStorage.getItem('kargo_code') || ''; } catch(e){ return ''; } }
+  function setCode(v){ try { localStorage.setItem('kargo_code', v); } catch(e){} }
+  var code = getCode();
+
+  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+  function pill(r){
+    if(!r) return '<span class="sub">--</span>';
+    var b = BAND[r.route] || ["REVIEW", r.route];
+    return '<span class="pill '+b[0]+'">'+b[1]+(r.rank?' <span class="rk">#'+r.rank+'</span>':'')+'</span>';
+  }
+  function score(r){return r && r.total!=null ? String(Number(r.total.toFixed(2))) : '--';}
+  var RULES = {R1:"scored 4 on both pattern criteria (P1 + P2)", R2:"PM-title tenure at or above the JD floor",
+               R3:"2+ yrs ground-level logistics work", R4:"low parse confidence / non-standard CV"};
+  var FLAGS = {F1:"Probe seniority: under 4 yrs in ownership roles", F2:"Confirm in-office: Mumbai not stated on CV"};
+  var REASONS = {"score >= 75 and G1 pass":"Score at or above "+D.lines.advance+" with product/system ownership shown",
+                 "G1 fail":"Score clears "+D.lines.advance+" but no product/system ownership (G1) shown",
+                 "band 55-74":"Score in the "+D.lines.reject+"–"+(D.lines.advance-1)+" review band",
+                 "score < 55, no rescue rule":"Score under "+D.lines.reject+" and no rescue rule fired"};
+
+  function list(){
+    var rows = C.slice().sort(function(a,b){
+      var va = sort.key==="best" ? a.best : sort.key==="name" ? a.name.toLowerCase()
+             : (a.roles[sort.key] && a.roles[sort.key].total!=null ? a.roles[sort.key].total : -1);
+      var vb = sort.key==="best" ? b.best : sort.key==="name" ? b.name.toLowerCase()
+             : (b.roles[sort.key] && b.roles[sort.key].total!=null ? b.roles[sort.key].total : -1);
+      return (va<vb?-1:va>vb?1:0)*sort.dir;
+    });
+    function th(label,key){
+      var d = sort.key===key ? '<span class="dir">'+(sort.dir<0?'↓':'↑')+'</span>' : '';
+      return '<th data-sort="'+key+'">'+label+d+'</th>';
+    }
+    var head = '<tr>'+th('Candidate','name');
+    ROLES.forEach(function(k){ head += th(k+' score',k) + '<th>'+k+' band</th>'; });
+    head += '<th>Better fit</th><th>Flags</th></tr>';
+    var body = rows.map(function(c){
+      var i = C.indexOf(c), flags = {};
+      ROLES.forEach(function(k){ var r=c.roles[k]; if(r){ r.flags.forEach(function(f){flags[f.split(' ')[0]]=f;}); if(r.error) flags.ERR='error'; }});
+      var tr = '<tr data-i="'+i+'"><td><div class="name">'+esc(c.name)+'</div><div class="sub">'+esc(c.file)+'</div></td>';
+      ROLES.forEach(function(k){ tr += '<td class="num">'+score(c.roles[k])+'</td><td>'+pill(c.roles[k])+'</td>'; });
+      tr += '<td>'+(c.better_fit?esc(c.better_fit):'<span class="sub">--</span>')+'</td><td>'+
+        Object.keys(flags).map(function(f){return '<span class="tag'+(f==='ERR'?' warn':'')+'" title="'+esc(flags[f])+'">'+esc(f)+'</span>';}).join('')+'</td></tr>';
+      return tr;
+    }).join('');
+    app.innerHTML =
+      '<header class="hero"><div class="wrap">'+
+        '<span class="chip">Kargo Hiring Rubric · screening run</span>'+
+        '<h1>Every PM / SPM CV against one consistent bar.</h1>'+
+        '<p>Scored on quoted evidence, not keywords or job titles. Each point needs an exact quote from the CV; the weighted score, gate and band are computed in code.</p>'+
+        (APP ? '<div class="actions"><button class="btn primary" id="add">+ Add CVs</button></div>'+
+               '<div class="meta">'+(!code ? 'Locked · enter the access code below to see candidates and add CVs' : loadError ? 'Locked · '+esc(loadError) : loaded ? C.length+' candidate'+(C.length===1?'':'s')+' · .pdf or .docx · '+
+               'contact details are stripped before scoring · a CV already scored is never scored twice' : 'Loading…')+'</div>'
+             : '<div class="meta">__META__</div>')+
+      '</div></header>'+
+      '<main class="wrap">'+
+        '<section class="card how"><b>How to read this:</b> every CV is scored against both the PM and SPM rubrics. '+
+          'Click a candidate to see each criterion, the CV quotes behind it, and anything the checker threw out. '+
+          'Nothing here contacts a candidate; this is a recommendation for a person to act on.'+
+          '<div class="legend">Bands:'+
+            '<span class="item"><span class="pill ADVANCE">Advance</span> score ≥ '+D.lines.advance+' and G1 passes</span>'+
+            '<span class="item"><span class="pill REVIEW">Review</span> '+D.lines.reject+'–'+(D.lines.advance-1)+', G1 failed, or a rescue rule fired — never auto-rejected</span>'+
+            '<span class="item"><span class="pill REJECT">Reject</span> under '+D.lines.reject+', nothing else flagged it</span>'+
+          '</div>'+
+          (APP && (!code || loadError) ? '<div class="access"><input id="code" type="password" placeholder="Access code" value="'+esc(code)+'">'+
+            '<button class="btn" id="save">Unlock</button>'+(loadError?'<span class="err">'+esc(loadError)+'</span>':'')+'</div>' : '')+
+          (queue.length ? '<div class="queue">'+queue.map(function(q){
+            return '<div class="it"><span>'+esc(q.name)+'</span><span class="st '+q.cls+'">'+esc(q.msg)+'</span></div>';}).join('')+'</div>' : '')+
+        '</section>'+
+        '<section class="card table"><div class="tscroll"><table><thead>'+head+'</thead><tbody>'+
+          (body || '<tr><td colspan="9" class="empty">'+(APP&&!loaded?'Loading…':APP?'No candidates yet. Click “+ Add CVs” or drop files on this page.':'No candidates screened yet.')+'</td></tr>')+
+        '</tbody></table></div></section>'+
+      '</main>';
+    app.querySelectorAll('th[data-sort]').forEach(function(el){
+      el.onclick = function(){ var k=el.getAttribute('data-sort');
+        sort = {key:k, dir: sort.key===k ? -sort.dir : (k==='name'?1:-1)}; list(); };
+    });
+    app.querySelectorAll('tbody tr[data-i]').forEach(function(el){
+      el.onclick = function(){ location.hash = 'c'+el.getAttribute('data-i'); };
+    });
+    if(APP){
+      var add = document.getElementById('add'); if(add) add.onclick = pick;
+      var save = document.getElementById('save');
+      if(save){ var inp = document.getElementById('code');
+        save.onclick = function(){ code = inp.value.trim(); setCode(code); load(); };
+        inp.onkeydown = function(e){ if(e.key==='Enter') save.onclick(); }; }
+    }
+  }
+
+  // ------------------------------------------------------------ app mode
+  function api(method, path, body){
+    return fetch(path, {method:method, headers:{'Content-Type':'application/json','X-Access-Code':code},
+                        body: body ? JSON.stringify(body) : undefined})
+      .then(function(r){ return r.json().catch(function(){ return {error:'Server error ('+r.status+')'}; })
+        .then(function(j){ if(!r.ok) throw new Error(j.error || ('HTTP '+r.status)); return j; }); });
+  }
+  function load(){
+    if(!code){ loaded = true; loadError=''; route(); return Promise.resolve(); }
+    return api('GET','/api/candidates').then(function(p){
+      C = p.candidates; loaded = true; loadError = ''; route();
+    }).catch(function(e){ loaded = true; loadError = e.message; route(); });
+  }
+  function pick(){
+    if(!code){ loadError = 'Enter the access code first.'; route(); return; }
+    var inp = document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='.pdf,.docx';
+    inp.onchange = function(){ upload([].slice.call(inp.files)); }; inp.click();
+  }
+  function setQ(q, cls, msg){ q.cls = cls; q.msg = msg; if(!location.hash) list(); }
+  function upload(files){
+    files = files.filter(function(f){ return /\.(pdf|docx)$/i.test(f.name); });
+    var items = files.map(function(f){ var q={name:f.name, cls:'', msg:'waiting'}; queue.push(q); return {f:f,q:q}; });
+    list();
+    items.reduce(function(p, it){ return p.then(function(){
+      if(it.f.size > 3*1024*1024){ setQ(it.q,'bad','over 3 MB'); return; }
+      setQ(it.q,'busy','scoring for PM + SPM… about a minute');
+      return new Promise(function(res,rej){ var r = new FileReader();
+          r.onload = function(){ res(String(r.result).split(',')[1]); }; r.onerror = rej; r.readAsDataURL(it.f); })
+        .then(function(b64){ return api('POST','/api/score',{filename:it.f.name, data:b64}); })
+        .then(function(j){
+          if(j.status==='exists') setQ(it.q,'','already scored — kept existing result');
+          else setQ(it.q,'ok','scored · '+Object.keys(j.summary).map(function(k){
+            var s=j.summary[k]; return k+' '+(s.total?Number(s.total):'--')+' '+(BAND[s.route]||[0,s.route])[1];}).join(' · '));
+          return load();
+        }).catch(function(e){ setQ(it.q,'bad',e.message); });
+    }); }, Promise.resolve());
+  }
+  if(APP){
+    document.addEventListener('dragover', function(e){ e.preventDefault(); document.body.classList.add('drop'); });
+    document.addEventListener('dragleave', function(e){ if(!e.relatedTarget) document.body.classList.remove('drop'); });
+    document.addEventListener('drop', function(e){ e.preventDefault(); document.body.classList.remove('drop');
+      if(!code){ loadError='Enter the access code first.'; route(); return; }
+      if(location.hash) location.hash=''; upload([].slice.call(e.dataTransfer.files)); });
+  }
+
+  function scoreCard(c,k){
+    var r = c.roles[k];
+    if(!r) return '<div class="card"><div class="sc-role">'+k+'</div><div class="sub">Not screened for this role.</div></div>';
+    var b = (BAND[r.route]||["REVIEW"])[0], why = [];
+    if(r.error) why.push('<span class="err">'+esc(r.error)+'</span>');
+    var rescued = /^rescue/.test(r.reason||'');
+    if(r.reason) why.push(rescued ? 'Score under '+D.lines.reject+', kept for review by a rescue rule' : esc(REASONS[r.reason]||r.reason));
+    if(!/G1/.test(r.reason||'')) why.push('G1 product/system ownership: '+(r.g1?'shown':'not shown'));
+    if(r.route!=='ADVANCE') r.rules.forEach(function(x){ why.push(esc(x)+(rescued?' rescue: ':' also fired: ')+esc(RULES[x]||'')); });
+    r.flags.forEach(function(f){ var k=f.split(' ')[0]; why.push('<span class="flag">'+esc(FLAGS[k]||f)+'</span>'); });
+    var o = k==='PM'?'SPM':'PM', ot = c.roles[o] && c.roles[o].total;
+    if(c.better_fit===o) why.push('Scores '+Math.round(ot-r.total)+' pts higher on the '+o+' rubric — consider them there');
+    var w = r.total==null?0:r.total;
+    return '<div class="card"><div class="sc-head"><span class="sc-role">'+esc(D.roles[k])+'</span>'+pill(r)+'</div>'+
+      '<div class="big">'+score(r)+' <small>/ 100</small></div>'+
+      '<div class="bar '+b+'"><i style="width:'+w+'%"></i><b style="left:'+D.lines.reject+'%"></b><b style="left:'+D.lines.advance+'%"></b></div>'+
+      '<div class="why">'+why.map(function(x){return '<div>'+x+'</div>';}).join('')+'</div></div>';
+  }
+
+  function dots(n){ var s='<span class="dots">'; for(var i=0;i<4;i++) s+='<i'+(i<n?' class="on"':'')+'></i>'; return s+'</span>'; }
+
+  function criteria(c,k){
+    var r = c.roles[k]; if(!r || r.total==null) return '';
+    var f = r.facts || {};
+    var facts = '<div class="facts">'+
+      '<span><b>PM title</b> '+(f.pm_title_years!=null?f.pm_title_years+' yrs':'--')+'</span>'+
+      '<span><b>Ground-level ops</b> '+(f.ops_tenure_years!=null?f.ops_tenure_years+' yrs':'--')+'</span>'+
+      '<span><b>Ownership roles</b> '+(f.ownership_role_years!=null?f.ownership_role_years+' yrs':'--')+'</span>'+
+      '<span><b>Mumbai / in-office</b> '+(f.mumbai_in_office_stated?'stated':'not stated')+'</span>'+
+      '<span><b>Parse</b> '+esc(f.parse_confidence||'--')+'</span></div>';
+    var g1 = f.g1_quote ? '<div class="q" style="margin-top:10px">G1: “'+esc(f.g1_quote)+'”</div>' : '';
+    return '<section class="card"><h3>'+esc(D.roles[k])+' criteria</h3>'+facts+g1+
+      r.criteria.map(function(x){
+        var changed = x.model_score!=null && x.model_score!==x.score;
+        return '<div class="crit"><div class="crit-h"><span class="t"><span class="id">'+esc(x.id)+'</span>'+esc(x.name)+'</span>'+
+          '<span class="m">'+dots(x.score||0)+'<b>'+(x.score==null?'--':x.score)+'/4</b> · '+x.weight+'% weight'+
+          (changed?' · model said '+x.model_score:'')+'</span></div>'+
+          (x.reason?'<p class="reason">'+esc(x.reason)+'</p>':'')+
+          x.evidence.map(function(q){return '<div class="q">“'+esc(q)+'”</div>';}).join('')+
+          (x.dropped.length?'<div class="dropped">Dropped by checker: '+x.dropped.map(function(d){
+            return '<s>“'+esc(d.quote)+'”</s> ('+esc(d.why)+')';}).join('; ')+'</div>':'')+
+        '</div>';
+      }).join('')+'</section>';
+  }
+
+  function detail(i){
+    var c = C[i]; if(!c){ location.hash=''; return; }
+    var briefs = ROLES.filter(function(k){return c.roles[k] && c.roles[k].brief;}).map(function(k){
+      return '<div class="role-l">'+k+'</div><p>'+esc(c.roles[k].brief)+'</p>';}).join('');
+    app.innerHTML =
+      '<div class="topbar"><div class="wrap"><a class="back" href="#">← Back</a><h2>'+esc(c.name)+'</h2>'+
+        (APP && c.id ? '<button class="btn danger" id="del" style="padding:4px 10px;font-size:12px">Remove</button>' : '<span class="spacer"></span>')+'</div></div>'+
+      '<div class="detail">'+
+        '<div class="card"><div class="name">'+esc(c.name)+'</div><div class="sub">'+esc(c.file)+
+          (c.added?' · Added '+esc(c.added.slice(0,10)):'')+
+          (c.better_fit?' · Better fit: '+esc(c.better_fit):'')+'</div></div>'+
+        '<div class="row2">'+ROLES.map(function(k){return scoreCard(c,k);}).join('')+'</div>'+
+        (briefs?'<section class="card brief"><h3>Brief</h3>'+briefs+'<div class="sub">Written by the model for context. It does not affect the score.</div></section>':'')+
+        ROLES.map(function(k){return criteria(c,k);}).join('')+
+      '</div>';
+    window.scrollTo(0,0);
+    var del = document.getElementById('del');
+    if(del) del.onclick = function(){
+      if(!confirm('Remove '+c.name+' and their scores? Upload the CV again to re-score.')) return;
+      del.disabled = true;
+      api('DELETE','/api/candidates?id='+encodeURIComponent(c.id))
+        .then(function(){ location.hash=''; return load(); })
+        .catch(function(e){ alert(e.message); del.disabled = false; });
+    };
+  }
+
+  function route(){ var m = location.hash.match(/^#c(\d+)$/); if(m) detail(+m[1]); else list(); }
+  window.addEventListener('hashchange', route);
+  route();
+  if(APP) load();
+})();
+</script>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    sys.exit(main())

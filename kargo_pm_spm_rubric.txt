@@ -1,0 +1,237 @@
+KARGO — PM & SENIOR PM SCREENING RUBRIC
+Built from: 2 JDs (Product Manager, Senior Product Manager) + 8 hire profiles
+Prepared: 02 Oct 2026
+
+======================================================================
+0. READ THIS FIRST — TWO PROBLEMS WITH THE INPUTS
+======================================================================
+
+[Certain] No performance ratings were in the files. The 8 hire profiles are
+CVs only. "High-rated" below is INFERRED from CV evidence (outcome metrics,
+adoption by others, manager quotes, promotions) — not from Kargo reviews.
+Replace Section 1's "Inferred tier" column with real review ratings and
+re-check Section 2 before using this in production.
+
+[Certain] A literal JD-keyword screen would reject 7 of 8 hires for SPM
+(nobody has 5–8 yrs PM title) and 6 of 8 for PM (only Vikram and Lavanya
+hold PM titles). The two profiles a title filter likes most (Vikram's XLRI
+MBA + CPO cert) look like the weakest fit for Kargo; the strongest-looking
+profiles (Rohan, Sunita) have zero PM titles. That is why the rubric below
+scores evidence, not titles, and has rescue rules instead of hard knockouts.
+
+
+======================================================================
+1. PERFORMANCE RATING TABLE (template + provisional fill)
+======================================================================
+
+Columns to collect for every hire (real data replaces the provisional fill):
+  Hire | Function | Overall rating (1–5) | Ramp-to-independent (weeks)
+  | Rated by / date | Top evidence of performance | Retained 12 mo? (Y/N)
+
+Provisional fill — inferred from CV evidence only:
+
+ #  Hire                  Function            Inferred tier  Strongest evidence on CV
+ -- --------------------- ------------------- -------------  -----------------------------------------------
+ 01 Rohan Desai           Eng (ex-CHA ops)    HIGH           Weekend BL-verification prototype -> 30 users in
+                                                             1 month -> core feature; P1 incidents -40%;
+                                                             mentee promoted in 14 mo
+ 02 Sunita Krishnamurthy  Ops / compliance    HIGH           Rebuilt intake workflow over a weekend when FMS
+                                                             vendor broke format — kept permanently; DGFT audit
+                                                             passed with zero observations; trainee -> TL
+ 07 Lavanya Iyer          PM (ex-3PL ops)     HIGH           Killed 2 features on usage data -> 3x WAU on
+                                                             redirected work; support tickets -60%; eng lead:
+                                                             "calls we trusted immediately"
+ 06 Meghna Tiwari         Customer Success    HIGH           Churn 6% vs team 24%; 30-60-90 framework adopted
+                                                             by whole CS team; overnight customs-hold save
+ 04 Aditya Shetty         Enterprise Sales    MID-HIGH       110%+ quota 5 qtrs; loss post-mortem became
+                                                             standard practice; port-ops ground exposure
+ 05 Preetham Rao          Backend Eng         MID            Strong systems metrics (99.95% uptime, lag 4h->8m)
+                                                             but large-co, no ops exposure, no ownership above
+                                                             team level
+ 08 Rahul Bose            Marketing           MID            Strong demand-gen numbers; no logistics, no product
+ 03 Vikram Nair           PM (HR-tech)        MID            12 features, $180K ARR; but large structured PM org,
+                                                             no domain, no kills, credential-led CV
+
+HIGH group used for pattern-finding: Rohan, Sunita, Lavanya, Meghna, Aditya.
+Comparison group: Preetham, Rahul, Vikram.
+
+
+======================================================================
+2. PATTERNS IN HIGH-RATED HIRES THAT ARE NOT IN EITHER JD
+======================================================================
+
+P1. UNPROMPTED FIX -> ADOPTED AS THE TEAM STANDARD          [Likely]
+    5/5 high group, 0/3 comparison group at the same strength.
+    - Rohan: Excel tracker adopted by 12-person ops team in 2 weeks;
+      weekend BL prototype became a core platform feature
+    - Sunita: weekend workflow redesign retained permanently; SOPs adopted
+      in full in 60 days
+    - Lavanya: Excel->Tableau dashboard adopted by 2 other regional teams
+    - Meghna: onboarding checklist + 30-60-90 framework became CS standard
+    - Aditya: loss post-mortem became standard qualification practice
+    Why it's not in the JDs: the JDs ask the PM to BUILD rhythms (assigned
+    work). This pattern is building something nobody asked for and having
+    peers adopt it voluntarily — the adoption is the proof.
+    Comparison: Vikram's PRD template was adopted, but by his own PM team
+    as part of his remit — scored lower.
+
+P2. ABSORBS OPERATIONAL CRISES WITHOUT ESCALATION           [Likely]
+    5/5 high group. The customer either never notices or is protected.
+    - Meghna: 7pm customs hold resolved overnight before client knew
+    - Sunita: two customs inspections closed with no penalties; DGFT audit
+    - Rohan: vendor migration under time pressure, zero data loss;
+      PostgreSQL fix diagnosed in 3 hrs, shipped same day
+    - Lavanya: owned outage post-mortem (internal + customer versions)
+    - Aditya: won 3 accounts from a competitor during port congestion
+    Why it's not in the JDs: SPM JD mentions "reliability standards" as
+    a system property; neither JD asks for personal behaviour under
+    pressure. Freight is deadline-driven (berth windows, DO release) — this
+    behaviour is the job.
+    Comparison: Preetham has incident metrics (22-min P1 MTTR) — real, but
+    within a rotation, not owned end-to-end. Vikram, Rahul: none.
+
+P3. EVIDENCE-HEAVY, CREDENTIAL-LIGHT (anti-pattern for screening) [Likely]
+    None of the high group LEADS with credentials: B.Com, BBA, B.Sc Psych,
+    B.E. Their CVs lead with outcomes and adoption. The comparison group
+    leads with MBA (XLRI), CPO cert, Reforge, conference talks, marketing
+    certs. Credentials do not separate the groups — outcomes do.
+    Rubric consequence: credentials, school tier and certifications score
+    ZERO points anywhere.
+
+Near-JD pattern (noted, not counted): 5/5 high group HELD a paid ground-level
+logistics job (CHA, forwarder docs, 3PL planning, port services). The PM JD
+asks only for "curiosity"; the SPM JD calls familiarity "an advantage". The
+evidence says lived ops tenure is stronger than either JD admits, so it is
+weighted heavily below.
+
+
+======================================================================
+3. SCORING MECHANICS (same for both roles)
+======================================================================
+
+Each criterion scored 0–4 on EVIDENCE only (a named artefact, a metric, an
+adoption count, a quote from a reviewer). Adjectives score 0.
+  4 = repeated, quantified, owned end-to-end
+  3 = one clear quantified instance, owned
+  2 = present but supporting role, or unquantified
+  1 = adjacent / weak signal
+  0 = absent
+Weighted score = sum( weight x score / 4 )   -> 0–100
+
+ROUTING (automatable):
+  ADVANCE        score >= 75 AND gate G1 passes
+  HUMAN REVIEW   score 55–74, OR score >= 75 with G1 failing,
+                 OR any rescue rule fires
+  REJECT         score < 55 and no rescue rule fires
+
+GATE G1 — product/system ownership evidence: has owned a product, module,
+platform or integration decision end-to-end (PM, eng lead owning a module,
+platform owner). G1 never rejects — failing it only blocks AUTO-advance.
+
+RESCUE RULES (stop good profiles being rejected):
+  R1  Score 4 on BOTH pattern criteria (P1 + P2)       -> human review
+  R2  PM-title tenure at or above JD floor (PM 2+ yrs,
+      SPM 5+ yrs)                                       -> human review
+  R3  Lived ground-level logistics tenure >= 2 yrs      -> human review
+  R4  Parser confidence low / CV non-standard format    -> human review
+
+NEVER-SCORE LIST: years of PM title (used only in R2), school tier, MBA,
+certifications, company brand, conference talks, tool lists.
+
+FLAGS (attach to record, do not change score):
+  F1  SPM candidate with < 4 yrs in ownership roles -> "probe seniority"
+  F2  Relocation to Mumbai not stated -> "confirm in-office"
+
+
+======================================================================
+4. PRODUCT MANAGER RUBRIC (weights = 100%)
+======================================================================
+
+ ID  Criterion                                         Weight  Source
+ --- ------------------------------------------------- ------  -----------
+ C1  Lived ground-level ops exposure                    25%    JD+evidence
+     (held a paid ops role in freight/3PL/supply chain;
+      4 = 2+ yrs doing the work, 1 = sold to / built for
+      ops users only)
+ C2  Shipped AND killed, with outcome data               20%    JD
+     (4 = shipped + killed + adoption/usage metric;
+      2 = shipped, no kill, no adoption data)
+ C3  Unprompted fix adopted as team standard  [P1]       20%    Pattern
+     (4 = built unasked AND adopted by others, counted)
+ C4  Absorbs crises without escalation        [P2]       15%    Pattern
+     (4 = repeated, customer protected, owned to closure)
+ C5  Operates without structure / early stage            10%    JD
+     (4 = sole owner, no handbook; 0 = large structured org)
+ C6  Written decision clarity                            10%    JD
+     (post-mortems, specs, API docs, kill rationale)
+                                                        ----
+                                                        100%
+
+
+======================================================================
+5. SENIOR PRODUCT MANAGER RUBRIC (weights = 100%)
+======================================================================
+
+ ID  Criterion                                         Weight  Source
+ --- ------------------------------------------------- ------  -----------
+ S1  Integration / data-layer depth                      25%    JD
+     (APIs, carrier/3PL/vendor integrations, migrations,
+      data quality; 4 = designed + owned, with metric)
+ S2  Consequential calls with no layer above             20%    JD
+     (4 = sole decision-owner, lived with the outcome)
+ S3  Lived ground-level ops exposure                     15%    JD+evidence
+ S4  Unprompted fix adopted as team standard  [P1]       15%    Pattern
+ S5  Multiplier — grows people & practices               15%    JD+pattern
+     (4 = mentee promoted / practice adopted org-wide;
+      maps to "shape the PM function")
+ S6  Absorbs crises / reliability under pressure [P2]    10%    Pattern
+                                                        ----
+                                                        100%
+
+
+======================================================================
+6. CALIBRATION RUN ON THE 8 PROFILES   [Guessing — no real ratings]
+======================================================================
+
+PM                     C1 C2 C3 C4 C5 C6  Score  G1   Route
+---------------------  -- -- -- -- -- --  -----  ---  -------------------------
+Lavanya Iyer            4  4  4  3  3  4  93.75  Y    ADVANCE
+Rohan Desai             4  3  4  4  3  2  87.50  Y    ADVANCE
+Sunita Krishnamurthy    4  1  4  4  4  3  82.50  N    HUMAN REVIEW (G1 fail)
+Meghna Tiwari           3  2  4  4  2  3  76.25  N    HUMAN REVIEW (G1 fail)
+Aditya Shetty           3  1  3  3  3  3  65.00  N    HUMAN REVIEW (band)
+Preetham Rao            1  2  3  3  0  1  45.00  Y    REJECT
+Rahul Bose              0  2  3  1  3  2  41.25  N    REJECT
+Vikram Nair             0  3  2  1  1  3  38.75  Y    HUMAN REVIEW (R2: 3 yrs PM)
+
+SPM                    S1 S2 S3 S4 S5 S6  Score  G1   Route
+---------------------  -- -- -- -- -- --  -----  ---  -------------------------
+Rohan Desai             4  3  4  4  4  4  95.00  Y    ADVANCE
+Sunita Krishnamurthy    2  4  4  4  4  4  87.50  N    HUMAN REVIEW (G1 fail)
+Lavanya Iyer            3  4  4  4  2  3  83.75  Y    ADVANCE + F1 (seniority)
+Meghna Tiwari           1  3  3  4  3  4  68.75  N    HUMAN REVIEW (band)
+Preetham Rao            4  2  1  3  2  4  67.50  Y    HUMAN REVIEW (band)
+Aditya Shetty           0  3  3  3  3  3  56.25  N    HUMAN REVIEW (band)
+Vikram Nair             2  2  0  2  3  1  43.75  Y    REJECT (4.5 yrs < SPM floor)
+Rahul Bose              0  3  0  3  3  1  40.00  N    REJECT
+
+Sanity check: every inferred-HIGH hire lands in ADVANCE or HUMAN REVIEW for
+both roles — none auto-rejected. The only real PM-titled candidate who scores
+low (Vikram) is rescued to review for PM by R2.
+
+
+======================================================================
+7. AUTOMATION FLOW
+======================================================================
+
+ 1. Ingest CV (.docx/.pdf) -> plain text
+ 2. LLM extraction: for each criterion, return quoted evidence lines from
+    the CV + score 0–4 + one-line reason. No quote = score 0.
+ 3. Compute weighted score in code (not by the LLM)
+ 4. Evaluate G1, R1–R4, F1–F2 in code
+ 5. Route: ADVANCE / HUMAN REVIEW / REJECT; write row to tracker
+ 6. Weekly: recruiter samples 10% of REJECTs; if any would have advanced,
+    lower the reject line by 5 and log it
+ 7. Quarterly: join scores to real performance ratings; re-fit weights
+
+Human time goes only to the review band. Audit trail = quoted evidence.

@@ -1,0 +1,7 @@
+{
+  "outputDirectory": "public",
+  "buildCommand": "",
+  "functions": {
+    "api/*.py": { "maxDuration": 300 }
+  }
+}
