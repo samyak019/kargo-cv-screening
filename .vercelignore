@@ -12,3 +12,4 @@ __pycache__/
 kargo_pm_spm_rubric.txt
 ratings.example.csv
 README.md
+.env*

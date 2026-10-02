@@ -9,3 +9,5 @@ ratings.csv
 report.html
 .vercel/
 deploy/
+.vercel
+.env*
