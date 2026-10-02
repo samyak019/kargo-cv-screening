@@ -307,7 +307,8 @@ h3{font-size:14px;margin:0 0 12px}
         '<span class="chip">Kargo Hiring Rubric · screening run</span>'+
         '<h1>Every PM / SPM CV against one consistent bar.</h1>'+
         '<p>Scored on quoted evidence, not keywords or job titles. Each point needs an exact quote from the CV; the weighted score, gate and band are computed in code.</p>'+
-        (APP ? '<div class="actions"><button class="btn primary" id="add">+ Add CVs</button></div>'+
+        (APP ? '<div class="actions"><button class="btn primary" id="add">+ Add a CV</button>'+
+               '<button class="btn" id="bulk">Bulk upload CVs</button></div>'+
                '<div class="meta">'+(needCode ? 'Locked · enter the access code below' : loaded ? C.length+' candidate'+(C.length===1?'':'s')+' · .pdf or .docx · '+
                'contact details are stripped before scoring · a CV already scored is never scored twice' : 'Loading…')+'</div>'
              : '<div class="meta">__META__</div>')+
@@ -324,11 +325,11 @@ h3{font-size:14px;margin:0 0 12px}
           (APP && loadError && !needCode ? '<div class="access"><span class="err">'+esc(loadError)+'</span></div>' : '')+
           (APP && needCode ? '<div class="access"><input id="code" type="password" placeholder="Access code" value="'+esc(code)+'">'+
             '<button class="btn" id="save">Unlock</button>'+(loadError?'<span class="err">'+esc(loadError)+'</span>':'')+'</div>' : '')+
-          (queue.length ? '<div class="queue">'+queue.map(function(q){
+          (queue.length ? '<div class="queue"><div class="sub" style="margin-bottom:4px">'+qsummary()+'</div>'+queue.map(function(q){
             return '<div class="it"><span>'+esc(q.name)+'</span><span class="st '+q.cls+'">'+esc(q.msg)+'</span></div>';}).join('')+'</div>' : '')+
         '</section>'+
         '<section class="card table"><div class="tscroll"><table><thead>'+head+'</thead><tbody>'+
-          (body || '<tr><td colspan="9" class="empty">'+(APP&&!loaded?'Loading…':APP?'No candidates yet. Click “+ Add CVs” or drop files on this page.':'No candidates screened yet.')+'</td></tr>')+
+          (body || '<tr><td colspan="9" class="empty">'+(APP&&!loaded?'Loading…':APP?'No candidates yet. Add a CV, bulk upload a batch, or drop files on this page.':'No candidates screened yet.')+'</td></tr>')+
         '</tbody></table></div></section>'+
       '</main>';
     app.querySelectorAll('th[data-sort]').forEach(function(el){
@@ -339,7 +340,8 @@ h3{font-size:14px;margin:0 0 12px}
       el.onclick = function(){ location.hash = 'c'+el.getAttribute('data-i'); };
     });
     if(APP){
-      var add = document.getElementById('add'); if(add) add.onclick = pick;
+      var add = document.getElementById('add'); if(add) add.onclick = function(){ pick(false); };
+      var bulk = document.getElementById('bulk'); if(bulk) bulk.onclick = function(){ pick(true); };
       var save = document.getElementById('save');
       if(save){ var inp = document.getElementById('code');
         save.onclick = function(){ code = inp.value.trim(); setCode(code); load(); };
@@ -359,9 +361,15 @@ h3{font-size:14px;margin:0 0 12px}
       C = p.candidates; loaded = true; loadError = ''; needCode = false; route();
     }).catch(function(e){ loaded = true; loadError = e.message; needCode = e.status === 401; route(); });
   }
-  function pick(){
-    var inp = document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='.pdf,.docx';
+  function pick(multiple){
+    var inp = document.createElement('input'); inp.type='file'; inp.multiple=!!multiple; inp.accept='.pdf,.docx';
     inp.onchange = function(){ upload([].slice.call(inp.files)); }; inp.click();
+  }
+  function qsummary(){
+    var done = queue.filter(function(q){ return q.cls==='ok' || q.cls==='bad' || q.msg.indexOf('already')===0; }).length;
+    var failed = queue.filter(function(q){ return q.cls==='bad'; }).length;
+    return 'Uploads: '+done+' of '+queue.length+' done'+(failed?' · '+failed+' failed':'')+
+      (done<queue.length?' · keep this tab open until they finish':'');
   }
   function setQ(q, cls, msg){ q.cls = cls; q.msg = msg; if(!location.hash) list(); }
   function upload(files){

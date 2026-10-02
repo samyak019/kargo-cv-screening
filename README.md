@@ -1,16 +1,18 @@
 # Kargo PM / SPM CV screening
 
-Spec: `kargo_pm_spm_rubric.txt`. The model (`claude-sonnet-5`) scores each CV against the PM and SPM criteria, 0–4 per criterion, and has to quote the CV for every point. Code then checks each quote against the CV text and drops any that don't match or are only credentials. The weighted score, gate G1, rescue rules R1–R4, flags F1–F2 and the band (Advance / Review / Reject) are all computed in `rubric.py`, never by the model. Emails and phone numbers are stripped from a CV before it is sent.
+Spec: `kargo_pm_spm_rubric.txt`. The model is Gemini (`gemini-3.6-flash`) when `GEMINI_API_KEY` is set, otherwise Claude (`claude-sonnet-5`) with `ANTHROPIC_API_KEY`. The model scores each CV against the PM and SPM criteria, 0–4 per criterion, and has to quote the CV for every point. Code then checks each quote against the CV text and drops any that don't match or are only credentials. The weighted score, gate G1, rescue rules R1–R4, flags F1–F2 and the band (Advance / Review / Reject) are all computed in `rubric.py`, never by the model. Emails and phone numbers are stripped from a CV before it is sent.
 
 ## Web app (Vercel)
 
-Open the site, then click **+ Add CVs** or drop .pdf / .docx files on the page. The site is open: anyone with the link can view candidates and add CVs. Each CV takes about a minute and is scored for both roles. Uploading a CV that has already been scored does nothing, so it is never charged twice. Click a candidate to see the evidence, or to remove them.
+Open the site, then click **+ Add a CV** for one file, **Bulk upload CVs** for many, or drop .pdf / .docx files onto the page. A bulk upload scores one CV at a time; keep the tab open until it finishes. The site is open: anyone with the link can view candidates and add CVs. Each CV takes about a minute and is scored for both roles. Uploading a CV that has already been scored does nothing, so it is never charged twice. Click a candidate to see the evidence, or to remove them.
 
 It needs these environment variables in the Vercel project (Settings → Environment Variables), then a redeploy:
 
 | Variable | What it is |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key (required) |
+| `GEMINI_API_KEY` | Your Google AI Studio key. Use this one, or `ANTHROPIC_API_KEY`. |
+| `GEMINI_MODEL` | Optional. Default `gemini-3.6-flash`. |
+| `ANTHROPIC_API_KEY` | Optional alternative to Gemini (`claude-sonnet-5`) |
 | `BLOB_READ_WRITE_TOKEN` | Added automatically when the Blob store is connected |
 | `ACCESS_CODE` | Optional. Set it to require a passphrase for every view and upload. |
 
@@ -20,7 +22,7 @@ Scored results are stored in Vercel Blob as `candidates/<id>-<random>.json`. The
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-export ANTHROPIC_API_KEY=...
+export GEMINI_API_KEY=...        # or ANTHROPIC_API_KEY
 .venv/bin/python screen.py                 # scores new or changed CVs in ./cvs, keeps earlier results
 .venv/bin/python screen.py --rescore       # re-score everything
 .venv/bin/python screen.py --roles SPM     # one role

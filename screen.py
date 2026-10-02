@@ -26,7 +26,9 @@ from pydantic import BaseModel
 import rubric
 from rubric import ROLES, Facts, Role
 
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-sonnet-5"          # used when ANTHROPIC_API_KEY is the key set
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"   # used when GEMINI_API_KEY is set (takes priority)
+GEMINI_RETRIES = 3
 MIN_TEXT_CHARS = 400  # below this the parse is treated as low confidence (R4)
 MIN_QUOTE_CHARS = 8
 
@@ -155,7 +157,73 @@ this role, the main gap against it, and one specific thing to probe in interview
 context for a human and does not affect the score."""
 
 
+class ModelError(RuntimeError):
+    """Any model/provider failure. The CV is routed to HUMAN REVIEW (CLI) or not saved (web)."""
+
+
+def make_client(model: Optional[str] = None) -> Tuple[object, str]:
+    """Pick the provider from whichever key is set. GEMINI_API_KEY wins if both are."""
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        from google import genai
+
+        return genai.Client(api_key=gemini_key), model or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        import anthropic
+
+        return anthropic.Anthropic(), model or os.environ.get("KARGO_MODEL", DEFAULT_MODEL)
+    raise ModelError("No model key is set. Add GEMINI_API_KEY (or ANTHROPIC_API_KEY).")
+
+
 def assess(client, model: str, role: Role, cv_text: str) -> Assessment:
+    if model.startswith("gemini"):
+        return _assess_gemini(client, model, role, cv_text)
+    return _assess_claude(client, model, role, cv_text)
+
+
+def _assess_gemini(client, model: str, role: Role, cv_text: str) -> Assessment:
+    import time
+
+    from google.genai import errors, types
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt(role),
+        response_mime_type="application/json",
+        response_schema=Assessment,
+    )
+    for attempt in range(GEMINI_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=model, contents=f"<cv>\n{cv_text}\n</cv>", config=config)
+            break
+        except errors.APIError as e:
+            if "PerDay" in str(e):
+                raise ModelError("Gemini's daily free-tier quota is used up (resets midnight Pacific). "
+                                 "A key with billing enabled removes the limit.") from e
+            if e.code not in (429, 500, 503) or attempt == GEMINI_RETRIES:
+                raise ModelError(f"Gemini error {e.code}: {e.message or e}") from e
+            hinted = re.search(r"retry in ([\d.]+)s", str(e))
+            time.sleep(min(20.0, float(hinted.group(1)) + 1 if hinted else 4 * 2 ** attempt))
+    parsed = response.parsed
+    if isinstance(parsed, Assessment):
+        return parsed
+    try:
+        return Assessment.model_validate_json(response.text or "")
+    except ValueError as e:
+        reason = getattr((response.candidates or [None])[0], "finish_reason", None)
+        raise ModelError(f"Gemini returned no usable JSON (finish reason: {reason})") from e
+
+
+def _assess_claude(client, model: str, role: Role, cv_text: str) -> Assessment:
+    import anthropic
+
+    try:
+        return _claude_call(client, model, role, cv_text)
+    except anthropic.APIError as e:
+        raise ModelError(f"Claude error: {e}") from e
+
+
+def _claude_call(client, model: str, role: Role, cv_text: str) -> Assessment:
     response = client.messages.parse(
         model=model,
         max_tokens=16000,
@@ -265,8 +333,6 @@ def score_cv(client, model: str, filename: str, text: str, roles: List[Role],
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    import anthropic
-
     text = redact(text)
     stem = Path(filename).stem
     file_ev: dict = {"candidate": stem, "_sha": text_sha(text)}
@@ -279,7 +345,7 @@ def score_cv(client, model: str, filename: str, text: str, roles: List[Role],
             return row, None
         try:
             a = assess(client, model, role, text)
-        except (anthropic.APIError, RuntimeError) as e:
+        except RuntimeError as e:  # ModelError, refusals, truncation
             row.update(route=rubric.REVIEW, route_reason="model error", error=str(e))
             return row, None
         scores, ev, facts = verify(role, a, text)
@@ -305,16 +371,16 @@ def score_cv(client, model: str, filename: str, text: str, roles: List[Role],
     return rows, file_ev
 
 
-def screen(cv_dir: Path, out_dir: Path, roles: List[Role], model: str, rescore: bool = False) -> int:
-    import anthropic
-
+def screen(cv_dir: Path, out_dir: Path, roles: List[Role], model: str, rescore: bool = False,
+           client=None) -> int:
     files = sorted(p for p in cv_dir.iterdir()
                    if p.suffix.lower() in (".docx", ".pdf") and not p.name.startswith("~$"))
     if not files:
         print(f"No .docx/.pdf files in {cv_dir}", file=sys.stderr)
         return 1
 
-    client = anthropic.Anthropic()
+    if client is None:
+        client, model = make_client(model)
     rows, evidence_out = [], {}
     prev_rows, prev_ev = ({}, {}) if rescore else load_previous(out_dir)
     new_calls = reused = 0
@@ -439,7 +505,8 @@ def main(argv=None) -> int:
     ap.add_argument("--cvs", type=Path, default=here / "cvs")
     ap.add_argument("--out", type=Path, default=here)
     ap.add_argument("--roles", nargs="+", choices=list(ROLES), default=list(ROLES))
-    ap.add_argument("--model", default=os.environ.get("KARGO_MODEL", DEFAULT_MODEL))
+    ap.add_argument("--model", default=None,
+                    help=f"default: {DEFAULT_GEMINI_MODEL} with GEMINI_API_KEY, else {DEFAULT_MODEL}")
     ap.add_argument("--calibrate", action="store_true",
                     help="compare results.csv with ratings.csv instead of screening")
     ap.add_argument("--ratings", type=Path, default=here / "ratings.csv")
@@ -449,10 +516,13 @@ def main(argv=None) -> int:
 
     if args.calibrate:
         return calibrate(args.out / "results.csv", args.ratings)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY is not set", file=sys.stderr)
+    try:
+        client, model = make_client(args.model)
+    except ModelError as e:
+        print(e, file=sys.stderr)
         return 1
-    return screen(args.cvs, args.out, [ROLES[k] for k in args.roles], args.model, args.rescore)
+    print(f"Model: {model}")
+    return screen(args.cvs, args.out, [ROLES[k] for k in args.roles], model, args.rescore, client)
 
 
 if __name__ == "__main__":

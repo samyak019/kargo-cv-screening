@@ -226,16 +226,14 @@ def test_calibrate_reports_rejected_high_raters(tmp_path, capsys):
 
 # ------------------------------------------------------- live (costs money)
 
-LIVE = os.environ.get("KARGO_LIVE") == "1" and os.environ.get("ANTHROPIC_API_KEY")
+LIVE = os.environ.get("KARGO_LIVE") == "1" and (os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
 
 
-@pytest.mark.skipif(not LIVE, reason="set KARGO_LIVE=1 and ANTHROPIC_API_KEY to run against the real CVs")
+@pytest.mark.skipif(not LIVE, reason="set KARGO_LIVE=1 and GEMINI_API_KEY or ANTHROPIC_API_KEY to run against the real CVs")
 @pytest.mark.parametrize("role_key,name,scores,total,route", calibration_cases())
 def test_live_cv_matches_section6(role_key, name, scores, total, route):
     """Screens the real CV and checks each criterion is within +/-1 of
     Section 6 and the route matches. CV file is found by first name."""
-    import anthropic
-
     first = name.split()[0].lower()
     files = [p for p in (ROOT / "cvs").iterdir()
              if first in p.name.lower() and p.suffix.lower() in (".docx", ".pdf")]
@@ -243,8 +241,8 @@ def test_live_cv_matches_section6(role_key, name, scores, total, route):
         pytest.skip(f"no CV in cvs/ matching '{first}'")
     role = ROLES[role_key]
     text = screen.extract_text(files[0])
-    a = screen.assess(anthropic.Anthropic(), os.environ.get("KARGO_MODEL", screen.DEFAULT_MODEL),
-                      role, text)
+    client, model = screen.make_client(os.environ.get("KARGO_MODEL"))
+    a = screen.assess(client, model, role, text)
     got, _, facts = screen.verify(role, a, text)
     off = {cid: (got[cid], want) for cid, want in zip(role.ids, scores) if abs(got[cid] - want) > 1}
     assert not off, f"criteria more than 1 off (got, expected): {off}"

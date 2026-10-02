@@ -129,3 +129,76 @@ def test_public_index_is_current():
         "__DATA__", report._embed(report.page_payload([], api=True)))
     assert (ROOT / "public" / "index.html").read_text() == expected, \
         "run: python report.py --app public/index.html"
+
+
+# ------------------------------------------------------------- gemini path
+
+class FakeGemini:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.models = self
+        self.calls = 0
+
+    def generate_content(self, model, contents, config):
+        self.calls += 1
+        out = self.outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+
+def gemini_error(code, msg):
+    from google.genai import errors
+    return errors.APIError(code, {"error": {"code": code, "message": msg, "status": "X"}})
+
+
+def sample_assessment():
+    role = ROLES["PM"]
+    crit = [screen.CriterionResult(id=c, score=2, evidence=["x"], reason="r") for c in role.ids]
+    return screen.Assessment(candidate_name="A", criteria=crit, g1_pass=False, g1_quote="",
+                             pm_title_years=0, ops_tenure_years=0, ownership_role_years=0,
+                             mumbai_in_office_stated=False, mumbai_quote="", parse_confidence="high", brief="")
+
+
+def test_gemini_parsed_and_json_fallback(monkeypatch):
+    a = sample_assessment()
+    ok = SimpleNamespace(parsed=a, text="", candidates=[])
+    assert screen.assess(FakeGemini([ok]), "gemini-3.6-flash", ROLES["PM"], "cv") == a
+    raw = SimpleNamespace(parsed=None, text=a.model_dump_json(), candidates=[])
+    assert screen.assess(FakeGemini([raw]), "gemini-3.6-flash", ROLES["PM"], "cv").candidate_name == "A"
+    bad = SimpleNamespace(parsed=None, text="not json", candidates=[SimpleNamespace(finish_reason="MAX_TOKENS")])
+    with pytest.raises(screen.ModelError, match="MAX_TOKENS"):
+        screen.assess(FakeGemini([bad]), "gemini-3.6-flash", ROLES["PM"], "cv")
+
+
+def test_gemini_retries_transient_then_succeeds(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    ok = SimpleNamespace(parsed=sample_assessment(), text="", candidates=[])
+    fake = FakeGemini([gemini_error(503, "overloaded"), gemini_error(429, "per minute, retry in 2s"), ok])
+    assert screen.assess(fake, "gemini-3.6-flash", ROLES["PM"], "cv").candidate_name == "A"
+    assert fake.calls == 3
+
+
+def test_gemini_daily_quota_and_bad_key_fail_fast():
+    with pytest.raises(screen.ModelError, match="daily free-tier"):
+        screen.assess(FakeGemini([gemini_error(429, "GenerateRequestsPerDayPerProject")]),
+                      "gemini-3.6-flash", ROLES["PM"], "cv")
+    fake = FakeGemini([gemini_error(400, "API key not valid")])
+    with pytest.raises(screen.ModelError, match="400"):
+        screen.assess(fake, "gemini-3.6-flash", ROLES["PM"], "cv")
+    assert fake.calls == 1
+
+
+def test_make_client_prefers_gemini(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    _, model = screen.make_client()
+    assert model == screen.DEFAULT_GEMINI_MODEL
+    monkeypatch.delenv("GEMINI_API_KEY")
+    _, model = screen.make_client()
+    assert model == screen.DEFAULT_MODEL
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    with pytest.raises(screen.ModelError):
+        screen.make_client()

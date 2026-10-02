@@ -141,12 +141,11 @@ def score_upload(body: dict, client=None, model: Optional[str] = None) -> Tuple[
                      "message": "Already scored. Kept the existing result."}
 
     if client is None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise ApiError(503, "ANTHROPIC_API_KEY is not set on the server.")
-        import anthropic
-
-        client = anthropic.Anthropic()
-    model = model or os.environ.get("KARGO_MODEL", screen.DEFAULT_MODEL)
+        try:
+            client, model = screen.make_client(model)
+        except screen.ModelError as e:
+            raise ApiError(503, f"{e} (Vercel → Settings → Environment Variables, then redeploy)")
+    model = model or screen.DEFAULT_MODEL
     rows, file_ev = screen.score_cv(client, model, filename, text, list(ROLES.values()),
                                     log=lambda *_: None)
 
