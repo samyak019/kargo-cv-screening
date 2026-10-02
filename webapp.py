@@ -13,6 +13,7 @@ import base64
 import hmac
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -48,6 +49,12 @@ def _blob():
     return blob
 
 
+def _read_json(blob, url: str) -> dict:
+    """blob.get returns raw bytes in vercel<0.4 and a GetBlobResult (bytes in .content) after."""
+    res = blob.get(url)
+    return json.loads(getattr(res, "content", res))
+
+
 def list_records() -> List[dict]:
     blob = _blob()
     items, cursor = [], None
@@ -60,8 +67,9 @@ def list_records() -> List[dict]:
     records = []
     for item in items:
         try:
-            rec = json.loads(blob.get(item.url))
-        except Exception:  # one bad record shouldn't hide the rest
+            rec = _read_json(blob, item.url)
+        except Exception as e:  # one bad record shouldn't hide the rest, but say why
+            print(f"skipped blob {item.pathname}: {type(e).__name__}: {e}", file=sys.stderr)
             continue
         rec["_url"] = item.url
         records.append(rec)
@@ -72,7 +80,7 @@ def find_by_sha(sha: str) -> Optional[dict]:
     blob = _blob()
     page = blob.list_objects(prefix=f"{PREFIX}{sha[:16]}", limit=10)
     for item in page.blobs:
-        rec = json.loads(blob.get(item.url))
+        rec = _read_json(blob, item.url)
         if rec.get("sha") == sha:
             return rec
     return None

@@ -32,7 +32,8 @@ class FakeBlob:
         return SimpleNamespace(blobs=blobs, has_more=False, cursor=None)
 
     def get(self, url):
-        return self.store[url]
+        # Mirrors vercel>=0.4: a result object with the bytes in .content (not raw bytes).
+        return SimpleNamespace(content=self.store[url], url=url, status_code=200)
 
     def delete(self, urls):
         for u in urls:
@@ -95,6 +96,7 @@ def test_score_store_dedupe_list_delete(env):
 
     # contact details never stored
     stored = next(iter(env.blob.store.values())).decode()
+    assert webapp._read_json(SimpleNamespace(get=lambda u: stored.encode()), "u")["file"] == "asha.docx"  # old raw-bytes API
     assert "asha@x.com" not in stored and "98202" not in stored
 
     payload = webapp.get_candidates()
