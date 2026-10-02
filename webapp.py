@@ -25,9 +25,9 @@ MAX_UPLOAD_BYTES = 3 * 1024 * 1024  # base64 must fit Vercel's 4.5 MB body limit
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: str = ""):
         super().__init__(message)
-        self.status, self.message = status, message
+        self.status, self.message, self.code = status, message, code
 
 
 def check_access(code: Optional[str]) -> None:
@@ -144,11 +144,14 @@ def score_upload(body: dict, client=None, model: Optional[str] = None) -> Tuple[
         try:
             client, model = screen.make_client(model)
         except screen.ModelError as e:
-            raise ApiError(503, f"{e} (Vercel → Settings → Environment Variables, then redeploy)")
+            raise ApiError(503, f"{e} (Vercel → Settings → Environment Variables, then redeploy)", "config")
     model = model or screen.DEFAULT_MODEL
     rows, file_ev = screen.score_cv(client, model, filename, text, list(ROLES.values()),
                                     log=lambda *_: None)
 
+    config_errors = [r["error"] for r in rows if r.pop("_config_error", False)]
+    if config_errors:  # a setting is wrong: retrying this or any other CV won't help
+        raise ApiError(503, config_errors[0], "config")
     model_errors = [r["error"] for r in rows if r.get("route_reason") == "model error"]
     if model_errors:  # don't store a half-scored CV; let the user retry
         raise ApiError(502, "Scoring failed, nothing was saved. Try again. (" + model_errors[0][:200] + ")")
@@ -159,3 +162,26 @@ def score_upload(body: dict, client=None, model: Optional[str] = None) -> Tuple[
     save_record(record)
     return 201, {"status": "scored", "id": record["id"], "file": filename,
                  "summary": {r["role"]: {"total": r.get("total"), "route": r["route"]} for r in rows}}
+
+
+def health() -> dict:
+    """Is scoring usable right now? Checks the key with a model lookup (no generation, no quota)."""
+    out = {"ok": False, "provider": None, "model": None, "endpoint": None, "key_hint": "not set", "error": ""}
+    try:
+        client, model = screen.make_client()
+    except screen.ModelError as e:
+        out.update(error=f"{e} " + screen.GEMINI_KEY_HELP, code="config")
+        return out
+    gemini = model.startswith("gemini")
+    out.update(provider="gemini" if gemini else "claude", model=model,
+               key_hint=screen.key_hint(os.environ.get("GEMINI_API_KEY" if gemini else "ANTHROPIC_API_KEY", "")))
+    if gemini:
+        opts = getattr(getattr(client, "_api_client", None), "_http_options", None)
+        out["endpoint"] = (getattr(opts, "base_url", "") or "").replace("https://", "").rstrip("/") or None
+    try:
+        screen.check_model(client, model)
+    except screen.ModelError as e:
+        out.update(error=str(e), code="config" if e.config else "")
+        return out
+    out["ok"] = True
+    return out

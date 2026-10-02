@@ -216,3 +216,62 @@ def test_vertex_express_key_detected(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "AQ.fake-express-key")
     client, _ = screen.make_client()
     assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
+
+
+# ------------------------------------------------------- key health / config
+
+class FakeModels:
+    def __init__(self, exc=None):
+        self.exc = exc
+
+    def get(self, model):
+        if self.exc:
+            raise self.exc
+
+
+def test_rejected_key_is_a_config_error_with_help():
+    err = screen.gemini_error(gemini_error(401, "Expected OAuth 2 access token"), "gemini-3.6-flash")
+    assert err.config and "aistudio.google.com/apikey" in str(err)
+    assert screen.gemini_error(gemini_error(404, "not found"), "gemini-x").config
+    assert not screen.gemini_error(gemini_error(500, "boom"), "gemini-x").config
+
+
+def test_health_reports_bad_key_without_leaking_it(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.supersecretvalue123")
+    monkeypatch.delenv("GEMINI_VERTEX", raising=False)
+    real = screen.make_client
+
+    def fake_make_client(model=None):
+        client, m = real(model)
+        return SimpleNamespace(models=FakeModels(gemini_error(401, "Expected OAuth 2")),
+                               _api_client=client._api_client), m
+
+    monkeypatch.setattr(screen, "make_client", fake_make_client)
+    h = webapp.health()
+    assert h["ok"] is False and h["code"] == "config" and h["provider"] == "gemini"
+    assert h["key_hint"] == "AQ.s… (22 chars)" and "supersecret" not in str(h)
+    assert h["endpoint"] == "aiplatform.googleapis.com"
+
+
+def test_health_ok(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaFake")
+    monkeypatch.setattr(screen, "make_client",
+                        lambda model=None: (SimpleNamespace(models=FakeModels()), "gemini-3.6-flash"))
+    assert webapp.health()["ok"] is True
+
+
+def test_health_no_key(monkeypatch):
+    for k in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    h = webapp.health()
+    assert h["ok"] is False and h["code"] == "config"
+
+
+def test_upload_with_rejected_key_is_config_error_and_saves_nothing(env, monkeypatch):
+    def reject(client, model, role, text):
+        raise screen.ModelError("Google rejected the Gemini API key (error 401).", config=True)
+
+    monkeypatch.setattr(screen, "assess", reject)
+    with pytest.raises(webapp.ApiError) as e:
+        webapp.score_upload({"filename": "a.docx", "data": cv_b64()}, client=object(), model="gemini-3.6-flash")
+    assert e.value.status == 503 and e.value.code == "config" and env.blob.store == {}

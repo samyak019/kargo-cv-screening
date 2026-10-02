@@ -39,7 +39,7 @@ class JsonHandler(BaseHTTPRequestHandler):
             status, body = fn()
             self.send_json(status, body)
         except webapp.ApiError as e:
-            self.send_json(e.status, {"error": e.message})
+            self.send_json(e.status, {"error": e.message, "code": e.code})
         except Exception as e:  # keep details in the function log, not the response
             traceback.print_exc()
             self.send_json(500, {"error": f"Server error: {type(e).__name__}"})

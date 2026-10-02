@@ -232,6 +232,17 @@ body.detail-view .aurora{opacity:.42}
 .access{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center}
 .access input{font:inherit;background:rgba(0,0,0,.4);color:#fff;border:1px solid var(--line-2);border-radius:8px;padding:8px 11px;min-width:220px}
 .err{color:var(--rej-fg);font-size:13px}
+.alert{text-align:left;border:1px solid var(--rej-bd);background:rgba(40,8,10,.72);border-radius:12px;padding:14px 16px;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 16px 40px -20px rgba(255,47,58,.45)}
+.alert .a-t{font-weight:600;color:#fff;display:flex;align-items:center;gap:8px}
+.alert .a-t::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--crimson);box-shadow:0 0 10px var(--crimson)}
+.alert p{margin:6px 0 0;color:var(--soft);font-size:13.5px}
+.alert ol{margin:8px 0 0;padding-left:20px;color:var(--soft);font-size:13.5px}
+.alert li{margin:2px 0}
+.alert a{color:var(--amber)}
+.alert .a-m{margin-top:10px;font-size:11.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}
+.alert .a-m button{margin-left:auto}
+.key[disabled]{opacity:.55;cursor:not-allowed}
 
 /* ---------------------------------------------------------- command palette */
 .palette{position:relative;max-width:720px;margin:44px auto 0;text-align:left;border-radius:14px;overflow:hidden;
@@ -382,6 +393,7 @@ tbody tr:last-child td{border-bottom:0}
   var sort = {key:"best", dir:-1};
   var APP = !!D.api, queue = [], loadError = '', loaded = !APP, needCode = false;
   var q = '', mode = ROLES[0], active = 0, shown = [];
+  var health = null, checking = false;   // app mode: result of /api/health
   function getCode(){ try { return localStorage.getItem('kargo_code') || ''; } catch(e){ return ''; } }
   function setCode(v){ try { localStorage.setItem('kargo_code', v); } catch(e){} }
   var code = getCode();
@@ -497,7 +509,29 @@ tbody tr:last-child td{border-bottom:0}
       var inp = $('code'), save = $('save');
       save.onclick = function(){ code = inp.value.trim(); setCode(code); load(); };
       inp.onkeydown = function(e){ if(e.key==='Enter') save.onclick(); };
+    } else if(APP && health && !health.ok){
+      var keyIssue = health.code === 'config';
+      n.innerHTML = '<div class="alert" role="alert"><div class="a-t">Scoring is switched off until the model key works</div>'+
+        '<p>'+esc(keyIssue ? health.error.split(' Create a key at')[0] : health.error)+'</p>'+
+        (keyIssue && health.provider !== 'claude' ? '<ol>'+
+          '<li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and click <b>Create API key</b>. It should start with <span class="mono">AIza</span>.</li>'+
+          '<li>In Vercel → kargo-cv-screening → Settings → Environment Variables, edit <span class="mono">GEMINI_API_KEY</span> and paste it.</li>'+
+          '<li>Deployments → ⋯ on the latest → <b>Redeploy</b>, then press “Check again”.</li></ol>' : '')+
+        '<div class="a-m mono"><span>key '+esc(health.key_hint||'not set')+'</span>'+
+          (health.model?'<span>model '+esc(health.model)+'</span>':'')+
+          (health.endpoint?'<span>'+esc(health.endpoint)+'</span>':'')+
+          '<button class="npill" id="recheck"'+(checking?' disabled':'')+'>'+(checking?'Checking…':'Check again')+'</button></div></div>';
+      $('recheck').onclick = checkHealth;
     } else n.innerHTML = APP && loadError ? '<span class="err">'+esc(loadError)+'</span>' : '';
+    var off = APP && health && !health.ok;
+    ['add','bulk','nadd','nbulk'].forEach(function(id){ var b=$(id); if(b){ b.disabled = !!off;
+      b.title = off ? 'Scoring is off until the model key works — see the notice' : ''; } });
+  }
+  function checkHealth(){
+    checking = true; renderNotice();
+    return api('GET','/api/health').then(function(h){ health = h; })
+      .catch(function(e){ health = {ok:false, error:e.message}; })
+      .then(function(){ checking = false; if($('home')) renderNotice(); });
   }
   function matches(c, terms){
     if(!terms.length) return true;
@@ -578,7 +612,7 @@ tbody tr:last-child td{border-bottom:0}
     var h = {'Content-Type':'application/json'}; if(code) h['X-Access-Code'] = code;
     return fetch(path, {method:method, headers:h, body: body ? JSON.stringify(body) : undefined})
       .then(function(r){ return r.json().catch(function(){ return {error:'Server error ('+r.status+')'}; })
-        .then(function(j){ if(!r.ok){ var e = new Error(j.error || ('HTTP '+r.status)); e.status = r.status; throw e; } return j; }); });
+        .then(function(j){ if(!r.ok){ var e = new Error(j.error || ('HTTP '+r.status)); e.status = r.status; e.code = j.code || ''; throw e; } return j; }); });
   }
   function load(){
     return api('GET','/api/candidates').then(function(p){
@@ -600,11 +634,14 @@ tbody tr:last-child td{border-bottom:0}
   function upload(files){
     files = files.filter(function(f){ return /\.(pdf|docx)$/i.test(f.name); });
     if(!files.length) return;
+    if(health && !health.ok){ var pal0 = $('notice'); if(pal0) pal0.scrollIntoView({behavior:'smooth', block:'center'}); return; }
+    var stopped = false;
     if(/^#cv-/.test(location.hash)) location.hash = '';
     var items = files.map(function(f){ var it={name:f.name, cls:'', msg:'waiting'}; queue.push(it); return {f:f,it:it}; });
     renderQueue();
     var pal = $('search'); if(pal) pal.scrollIntoView({behavior:'smooth', block:'center'});
     items.reduce(function(p, x){ return p.then(function(){
+      if(stopped){ setQ(x.it,'bad','not sent — fix the model key first, then upload again'); return; }
       if(x.f.size > 3*1024*1024){ setQ(x.it,'bad','over 3 MB'); return; }
       setQ(x.it,'busy','scoring for PM + SPM… about a minute');
       return new Promise(function(res,rej){ var r = new FileReader();
@@ -615,7 +652,13 @@ tbody tr:last-child td{border-bottom:0}
           else setQ(x.it,'ok','scored · '+Object.keys(j.summary).map(function(k){
             var s=j.summary[k]; return k+' '+(s.total?Number(s.total):'--')+' '+(BAND[s.route]||[0,s.route])[1];}).join(' · '));
           return load();
-        }).catch(function(e){ if(e.status===401){ needCode = true; loadError = e.message; renderNotice(); } setQ(x.it,'bad',e.message); });
+        }).catch(function(e){
+          if(e.status===401){ needCode = true; loadError = e.message; renderNotice(); }
+          if(e.code==='config'){ stopped = true; setQ(x.it,'bad','not scored — the model key was rejected (see the notice above)');
+            health = {ok:false, code:'config', error:e.message, key_hint:(health&&health.key_hint)||'', model:health&&health.model,
+                      endpoint:health&&health.endpoint, provider:health&&health.provider};
+            renderNotice(); var nn=$('notice'); if(nn) nn.scrollIntoView({behavior:'smooth', block:'center'}); return; }
+          setQ(x.it,'bad', e.message.length > 220 ? e.message.slice(0,220)+'…' : e.message); });
     }); }, Promise.resolve());
   }
   if(APP){
@@ -712,7 +755,7 @@ tbody tr:last-child td{border-bottom:0}
   }
   window.addEventListener('hashchange', route);
   route();
-  if(APP) load();
+  if(APP){ load(); checkHealth(); }
 })();
 </script>
 </body>

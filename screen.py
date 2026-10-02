@@ -158,7 +158,58 @@ context for a human and does not affect the score."""
 
 
 class ModelError(RuntimeError):
-    """Any model/provider failure. The CV is routed to HUMAN REVIEW (CLI) or not saved (web)."""
+    """Any model/provider failure. The CV is routed to HUMAN REVIEW (CLI) or not saved (web).
+
+    config=True means retrying won't help (bad key, unknown model): a person has to fix a setting.
+    """
+
+    def __init__(self, message: str, config: bool = False):
+        super().__init__(message)
+        self.config = config
+
+
+GEMINI_KEY_HELP = ("Create a key at https://aistudio.google.com/apikey (AI Studio keys start with \"AIza\"), "
+                   "paste it into GEMINI_API_KEY in Vercel → Settings → Environment Variables, then redeploy.")
+
+
+def key_hint(key: str) -> str:
+    """Enough to tell which key is set without revealing it."""
+    key = (key or "").strip()
+    return f"{key[:4]}… ({len(key)} chars)" if key else "not set"
+
+
+def gemini_error(e, model: str) -> ModelError:
+    text = str(e)
+    if "PerDay" in text:
+        return ModelError("Gemini's daily free-tier quota is used up (resets midnight Pacific). "
+                          "A key with billing enabled removes the limit.")
+    if e.code in (401, 403) or (e.code == 400 and "API key" in text):
+        return ModelError(f"Google rejected the Gemini API key (error {e.code}). " + GEMINI_KEY_HELP, config=True)
+    if e.code == 404:
+        return ModelError(f"The model \"{model}\" isn't available to this key (error 404). Set GEMINI_MODEL "
+                          "in Vercel to a model the key can use, then redeploy.", config=True)
+    return ModelError(f"Gemini error {e.code}: {(getattr(e, 'message', '') or text)[:200]}")
+
+
+def check_model(client, model: str) -> None:
+    """Cheap credential check (a model lookup, no generation). Raises ModelError."""
+    if model.startswith("gemini"):
+        from google.genai import errors
+
+        try:
+            client.models.get(model=model)
+        except errors.APIError as e:
+            raise gemini_error(e, model) from e
+        return
+    import anthropic
+
+    try:
+        client.models.retrieve(model)
+    except anthropic.AuthenticationError as e:
+        raise ModelError("Anthropic rejected ANTHROPIC_API_KEY (401). Replace it in Vercel and redeploy.",
+                         config=True) from e
+    except anthropic.APIError as e:
+        raise ModelError(f"Claude error: {e}") from e
 
 
 def make_client(model: Optional[str] = None) -> Tuple[object, str]:
@@ -202,11 +253,8 @@ def _assess_gemini(client, model: str, role: Role, cv_text: str) -> Assessment:
                 model=model, contents=f"<cv>\n{cv_text}\n</cv>", config=config)
             break
         except errors.APIError as e:
-            if "PerDay" in str(e):
-                raise ModelError("Gemini's daily free-tier quota is used up (resets midnight Pacific). "
-                                 "A key with billing enabled removes the limit.") from e
-            if e.code not in (429, 500, 503) or attempt == GEMINI_RETRIES:
-                raise ModelError(f"Gemini error {e.code}: {e.message or e}") from e
+            if "PerDay" in str(e) or e.code not in (429, 500, 503) or attempt == GEMINI_RETRIES:
+                raise gemini_error(e, model) from e
             hinted = re.search(r"retry in ([\d.]+)s", str(e))
             time.sleep(min(20.0, float(hinted.group(1)) + 1 if hinted else 4 * 2 ** attempt))
     parsed = response.parsed
@@ -224,6 +272,8 @@ def _assess_claude(client, model: str, role: Role, cv_text: str) -> Assessment:
 
     try:
         return _claude_call(client, model, role, cv_text)
+    except anthropic.AuthenticationError as e:
+        raise ModelError("Anthropic rejected ANTHROPIC_API_KEY (401). Replace it and redeploy.", config=True) from e
     except anthropic.APIError as e:
         raise ModelError(f"Claude error: {e}") from e
 
@@ -352,6 +402,8 @@ def score_cv(client, model: str, filename: str, text: str, roles: List[Role],
             a = assess(client, model, role, text)
         except RuntimeError as e:  # ModelError, refusals, truncation
             row.update(route=rubric.REVIEW, route_reason="model error", error=str(e))
+            if getattr(e, "config", False):
+                row["_config_error"] = True
             return row, None
         scores, ev, facts = verify(role, a, text)
         d = rubric.decide(role, scores, facts)
