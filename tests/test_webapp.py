@@ -73,11 +73,9 @@ def cv_b64(extra=""):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def test_access_code_required(monkeypatch):
+def test_open_by_default_lockable_with_code(monkeypatch):
     monkeypatch.delenv("ACCESS_CODE", raising=False)
-    with pytest.raises(webapp.ApiError) as e:
-        webapp.check_access("anything")
-    assert e.value.status == 503
+    webapp.check_access(None)  # public: no code needed
     monkeypatch.setenv("ACCESS_CODE", "s3cret")
     with pytest.raises(webapp.ApiError) as e:
         webapp.check_access("wrong")

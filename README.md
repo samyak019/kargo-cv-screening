@@ -4,17 +4,17 @@ Spec: `kargo_pm_spm_rubric.txt`. The model (`claude-sonnet-5`) scores each CV ag
 
 ## Web app (Vercel)
 
-Open the site, enter the access code, then click **+ Add CVs** or drop .pdf / .docx files on the page. Each CV takes about a minute and is scored for both roles. Uploading a CV that has already been scored does nothing, so it is never charged twice. Click a candidate to see the evidence, or to remove them.
+Open the site, then click **+ Add CVs** or drop .pdf / .docx files on the page. The site is open: anyone with the link can view candidates and add CVs. Each CV takes about a minute and is scored for both roles. Uploading a CV that has already been scored does nothing, so it is never charged twice. Click a candidate to see the evidence, or to remove them.
 
 It needs these environment variables in the Vercel project (Settings → Environment Variables), then a redeploy:
 
 | Variable | What it is |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `ACCESS_CODE` | Any passphrase you choose. Every API call needs it, so the public URL can't read candidates or spend credit. |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key (required) |
 | `BLOB_READ_WRITE_TOKEN` | Added automatically when the Blob store is connected |
+| `ACCESS_CODE` | Optional. Set it to require a passphrase for every view and upload. |
 
-Scored results are stored in Vercel Blob as `candidates/<id>-<random>.json`. The raw CV file is not stored. Blob objects are public-read at unguessable URLs, and the app only serves them through the access-coded API.
+Scored results are stored in Vercel Blob as `candidates/<id>-<random>.json`. The raw CV file is not stored. Blob objects are public-read at unguessable URLs, and the app serves them through its API.
 
 ## Command line
 

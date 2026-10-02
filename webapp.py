@@ -5,9 +5,9 @@ Each scored CV is stored as one JSON record in Vercel Blob:
 The sha is of the redacted CV text, so uploading the same CV again is a
 no-op: it is never scored twice. The raw CV file is not stored.
 
-Every endpoint needs the X-Access-Code header to match the ACCESS_CODE env
-var. If ACCESS_CODE or ANTHROPIC_API_KEY is unset the API refuses to run, so
-a public URL can't be used to read candidate data or spend API credit.
+The app is open by default: anyone with the URL can view candidates and add
+CVs. Setting the optional ACCESS_CODE env var locks every endpoint behind an
+X-Access-Code header without any code change.
 """
 import base64
 import hmac
@@ -32,9 +32,8 @@ class ApiError(Exception):
 
 def check_access(code: Optional[str]) -> None:
     expected = os.environ.get("ACCESS_CODE", "")
-    if not expected:
-        raise ApiError(503, "ACCESS_CODE is not set on the server. Add it in Vercel → Settings → "
-                            "Environment Variables, then redeploy.")
+    if not expected:  # open, public mode
+        return
     if not code or not hmac.compare_digest(code.encode(), expected.encode()):
         raise ApiError(401, "Wrong or missing access code.")
 

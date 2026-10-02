@@ -134,7 +134,7 @@ h3{font-size:14px;margin:0 0 12px}
   var app = document.getElementById('app');
   var BAND = {"ADVANCE":["ADVANCE","Advance"],"HUMAN REVIEW":["REVIEW","Review"],"REJECT":["REJECT","Reject"]};
   var sort = {key:"best", dir:-1};
-  var APP = !!D.api, queue = [], loadError = '', loaded = !APP;
+  var APP = !!D.api, queue = [], loadError = '', loaded = !APP, needCode = false;
   function getCode(){ try { return localStorage.getItem('kargo_code') || ''; } catch(e){ return ''; } }
   function setCode(v){ try { localStorage.setItem('kargo_code', v); } catch(e){} }
   var code = getCode();
@@ -185,7 +185,7 @@ h3{font-size:14px;margin:0 0 12px}
         '<h1>Every PM / SPM CV against one consistent bar.</h1>'+
         '<p>Scored on quoted evidence, not keywords or job titles. Each point needs an exact quote from the CV; the weighted score, gate and band are computed in code.</p>'+
         (APP ? '<div class="actions"><button class="btn primary" id="add">+ Add CVs</button></div>'+
-               '<div class="meta">'+(!code ? 'Locked · enter the access code below to see candidates and add CVs' : loadError ? 'Locked · '+esc(loadError) : loaded ? C.length+' candidate'+(C.length===1?'':'s')+' · .pdf or .docx · '+
+               '<div class="meta">'+(needCode ? 'Locked · enter the access code below' : loaded ? C.length+' candidate'+(C.length===1?'':'s')+' · .pdf or .docx · '+
                'contact details are stripped before scoring · a CV already scored is never scored twice' : 'Loading…')+'</div>'
              : '<div class="meta"></div>')+
       '</div></header>'+
@@ -198,7 +198,8 @@ h3{font-size:14px;margin:0 0 12px}
             '<span class="item"><span class="pill REVIEW">Review</span> '+D.lines.reject+'–'+(D.lines.advance-1)+', G1 failed, or a rescue rule fired — never auto-rejected</span>'+
             '<span class="item"><span class="pill REJECT">Reject</span> under '+D.lines.reject+', nothing else flagged it</span>'+
           '</div>'+
-          (APP && (!code || loadError) ? '<div class="access"><input id="code" type="password" placeholder="Access code" value="'+esc(code)+'">'+
+          (APP && loadError && !needCode ? '<div class="access"><span class="err">'+esc(loadError)+'</span></div>' : '')+
+          (APP && needCode ? '<div class="access"><input id="code" type="password" placeholder="Access code" value="'+esc(code)+'">'+
             '<button class="btn" id="save">Unlock</button>'+(loadError?'<span class="err">'+esc(loadError)+'</span>':'')+'</div>' : '')+
           (queue.length ? '<div class="queue">'+queue.map(function(q){
             return '<div class="it"><span>'+esc(q.name)+'</span><span class="st '+q.cls+'">'+esc(q.msg)+'</span></div>';}).join('')+'</div>' : '')+
@@ -225,19 +226,17 @@ h3{font-size:14px;margin:0 0 12px}
 
   // ------------------------------------------------------------ app mode
   function api(method, path, body){
-    return fetch(path, {method:method, headers:{'Content-Type':'application/json','X-Access-Code':code},
-                        body: body ? JSON.stringify(body) : undefined})
+    var h = {'Content-Type':'application/json'}; if(code) h['X-Access-Code'] = code;
+    return fetch(path, {method:method, headers:h, body: body ? JSON.stringify(body) : undefined})
       .then(function(r){ return r.json().catch(function(){ return {error:'Server error ('+r.status+')'}; })
-        .then(function(j){ if(!r.ok) throw new Error(j.error || ('HTTP '+r.status)); return j; }); });
+        .then(function(j){ if(!r.ok){ var e = new Error(j.error || ('HTTP '+r.status)); e.status = r.status; throw e; } return j; }); });
   }
   function load(){
-    if(!code){ loaded = true; loadError=''; route(); return Promise.resolve(); }
     return api('GET','/api/candidates').then(function(p){
-      C = p.candidates; loaded = true; loadError = ''; route();
-    }).catch(function(e){ loaded = true; loadError = e.message; route(); });
+      C = p.candidates; loaded = true; loadError = ''; needCode = false; route();
+    }).catch(function(e){ loaded = true; loadError = e.message; needCode = e.status === 401; route(); });
   }
   function pick(){
-    if(!code){ loadError = 'Enter the access code first.'; route(); return; }
     var inp = document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='.pdf,.docx';
     inp.onchange = function(){ upload([].slice.call(inp.files)); }; inp.click();
   }
@@ -257,14 +256,13 @@ h3{font-size:14px;margin:0 0 12px}
           else setQ(it.q,'ok','scored · '+Object.keys(j.summary).map(function(k){
             var s=j.summary[k]; return k+' '+(s.total?Number(s.total):'--')+' '+(BAND[s.route]||[0,s.route])[1];}).join(' · '));
           return load();
-        }).catch(function(e){ setQ(it.q,'bad',e.message); });
+        }).catch(function(e){ if(e.status===401){ needCode = true; loadError = e.message; } setQ(it.q,'bad',e.message); });
     }); }, Promise.resolve());
   }
   if(APP){
     document.addEventListener('dragover', function(e){ e.preventDefault(); document.body.classList.add('drop'); });
     document.addEventListener('dragleave', function(e){ if(!e.relatedTarget) document.body.classList.remove('drop'); });
     document.addEventListener('drop', function(e){ e.preventDefault(); document.body.classList.remove('drop');
-      if(!code){ loadError='Enter the access code first.'; route(); return; }
       if(location.hash) location.hash=''; upload([].slice.call(e.dataTransfer.files)); });
   }
 
