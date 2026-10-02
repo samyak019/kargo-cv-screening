@@ -322,3 +322,12 @@ def test_only_new_or_changed_cvs_are_scored(tmp_path, monkeypatch):
     screen.screen(cvs, tmp_path, roles, "m", rescore=True)
     assert len(calls) == 6
     assert (tmp_path / "report.html").exists()
+
+
+def test_single_word_mumbai_quote_counts():
+    role = ROLES["PM"]
+    crit = [dict(id=cid, score=0, evidence=[], reason="x") for cid in role.ids]
+    _, _, facts = screen.verify(role, fake_assessment(crit, mumbai_quote="Mumbai"), CV)
+    assert facts.mumbai_in_office_stated
+    _, _, facts = screen.verify(role, fake_assessment(crit, mumbai_quote="Pune"), CV + "\nPune")
+    assert not facts.mumbai_in_office_stated

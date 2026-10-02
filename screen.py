@@ -85,9 +85,9 @@ def normalize(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def quote_in_cv(quote: str, norm_cv: str) -> bool:
+def quote_in_cv(quote: str, norm_cv: str, min_chars: int = MIN_QUOTE_CHARS) -> bool:
     q = normalize(quote).strip(" .\"'")
-    return len(q) >= MIN_QUOTE_CHARS and q in norm_cv
+    return len(q) >= min_chars and q in norm_cv
 
 
 def is_credential_only(quote: str) -> bool:
@@ -331,7 +331,9 @@ def verify(role: Role, a: Assessment, cv_text: str) -> Tuple[Dict[str, int], Dic
                          "dropped": dropped, "reason": note}
 
     g1 = a.g1_pass and quote_in_cv(a.g1_quote, norm_cv)
-    mumbai = a.mumbai_in_office_stated and quote_in_cv(a.mumbai_quote, norm_cv)
+    # A location is often a single word ("Mumbai"), so this check accepts short quotes that name it.
+    mumbai = a.mumbai_in_office_stated and quote_in_cv(a.mumbai_quote, norm_cv, min_chars=4) \
+        and "mumbai" in normalize(a.mumbai_quote)
     low_text = len(cv_text.strip()) < MIN_TEXT_CHARS
     facts = Facts(
         g1_pass=g1,
