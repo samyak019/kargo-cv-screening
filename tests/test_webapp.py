@@ -204,18 +204,15 @@ def test_make_client_prefers_gemini(monkeypatch):
         screen.make_client()
 
 
-def test_vertex_express_key_detected(monkeypatch):
+def test_aq_keys_use_gemini_api_unless_vertex_opt_in(monkeypatch):
     monkeypatch.delenv("GEMINI_VERTEX", raising=False)
-    monkeypatch.setenv("GEMINI_API_KEY", "AQ.fake-express-key")
+    for key in ("AQ.fake-auth-key", "AIzaFakeStudioKey"):
+        monkeypatch.setenv("GEMINI_API_KEY", key)
+        client, _ = screen.make_client()
+        assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
+    monkeypatch.setenv("GEMINI_VERTEX", "1")
     client, _ = screen.make_client()
     assert "aiplatform.googleapis.com" in client._api_client._http_options.base_url
-    monkeypatch.setenv("GEMINI_API_KEY", "AIzaFakeStudioKey")
-    client, _ = screen.make_client()
-    assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
-    monkeypatch.setenv("GEMINI_VERTEX", "0")
-    monkeypatch.setenv("GEMINI_API_KEY", "AQ.fake-express-key")
-    client, _ = screen.make_client()
-    assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
 
 
 # ------------------------------------------------------- key health / config
@@ -231,7 +228,7 @@ class FakeModels:
 
 def test_rejected_key_is_a_config_error_with_help():
     err = screen.gemini_error(gemini_error(401, "Expected OAuth 2 access token"), "gemini-3.6-flash")
-    assert err.config and "aistudio.google.com/apikey" in str(err)
+    assert err.config and "aistudio.google.com/apikey" in str(err) and "AQ." in str(err)
     assert screen.gemini_error(gemini_error(404, "not found"), "gemini-x").config
     assert not screen.gemini_error(gemini_error(500, "boom"), "gemini-x").config
 
@@ -250,7 +247,7 @@ def test_health_reports_bad_key_without_leaking_it(monkeypatch):
     h = webapp.health()
     assert h["ok"] is False and h["code"] == "config" and h["provider"] == "gemini"
     assert h["key_hint"] == "AQ.s… (22 chars)" and "supersecret" not in str(h)
-    assert h["endpoint"] == "aiplatform.googleapis.com"
+    assert h["endpoint"] == "generativelanguage.googleapis.com"
 
 
 def test_health_ok(monkeypatch):

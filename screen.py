@@ -168,8 +168,9 @@ class ModelError(RuntimeError):
         self.config = config
 
 
-GEMINI_KEY_HELP = ("Create a key at https://aistudio.google.com/apikey (AI Studio keys start with \"AIza\"), "
-                   "paste it into GEMINI_API_KEY in Vercel → Settings → Environment Variables, then redeploy.")
+GEMINI_KEY_HELP = ("Check the key is copied in full from https://aistudio.google.com/apikey (keys start with "
+                   "\"AQ.\" or \"AIza\"), paste it into GEMINI_API_KEY in Vercel → Settings → Environment "
+                   "Variables, then redeploy.")
 
 
 def key_hint(key: str) -> str:
@@ -218,10 +219,10 @@ def make_client(model: Optional[str] = None) -> Tuple[object, str]:
     if gemini_key:
         from google import genai
 
-        # "AQ." keys are Google Cloud Vertex AI express-mode keys; "AIza" keys are AI Studio keys.
-        # They authenticate against different endpoints. GEMINI_VERTEX=1/0 overrides the guess.
-        flag = os.environ.get("GEMINI_VERTEX", "").strip()
-        vertex = flag == "1" if flag in ("0", "1") else gemini_key.startswith("AQ.")
+        # AI Studio keys ("AQ." auth keys since May 2026, or legacy "AIza") use the Gemini API
+        # endpoint; AQ. keys need google-genai >= 2.18.1. GEMINI_VERTEX=1 opts into Vertex AI
+        # express mode instead, for keys issued by a Google Cloud project with Vertex AI enabled.
+        vertex = os.environ.get("GEMINI_VERTEX", "").strip() == "1"
         client = genai.Client(vertexai=True, api_key=gemini_key) if vertex else genai.Client(api_key=gemini_key)
         return client, model or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     if os.environ.get("ANTHROPIC_API_KEY", "").strip():

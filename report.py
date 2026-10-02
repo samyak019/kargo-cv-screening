@@ -514,12 +514,12 @@ tbody tr:last-child td{border-bottom:0}
       n.innerHTML = '<div class="alert" role="alert"><div class="a-t">Scoring is switched off until the model key works</div>'+
         '<p>'+esc(keyIssue ? health.error.split(' Create a key at')[0] : health.error)+'</p>'+
         (keyIssue && health.provider !== 'claude' ? '<ol>'+
-          '<li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and click <b>Create API key</b>. It should start with <span class="mono">AIza</span>.</li>'+
+          '<li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and copy the whole key (it starts with <span class="mono">AQ.</span> or <span class="mono">AIza</span>).</li>'+
           '<li>In Vercel → kargo-cv-screening → Settings → Environment Variables, edit <span class="mono">GEMINI_API_KEY</span> and paste it.</li>'+
           '<li>Deployments → ⋯ on the latest → <b>Redeploy</b>, then press “Check again”.</li></ol>' : '')+
         '<div class="a-m mono"><span>key '+esc(health.key_hint||'not set')+'</span>'+
           (health.model?'<span>model '+esc(health.model)+'</span>':'')+
-          (health.endpoint?'<span>'+esc(health.endpoint)+'</span>':'')+
+          (health.endpoint?'<span>'+esc(health.endpoint)+'</span>':'')+(health.sdk?'<span>'+esc(health.sdk)+'</span>':'')+
           '<button class="npill" id="recheck"'+(checking?' disabled':'')+'>'+(checking?'Checking…':'Check again')+'</button></div></div>';
       $('recheck').onclick = checkHealth;
     } else n.innerHTML = APP && loadError ? '<span class="err">'+esc(loadError)+'</span>' : '';

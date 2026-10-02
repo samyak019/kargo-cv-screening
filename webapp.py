@@ -176,6 +176,12 @@ def health() -> dict:
     out.update(provider="gemini" if gemini else "claude", model=model,
                key_hint=screen.key_hint(os.environ.get("GEMINI_API_KEY" if gemini else "ANTHROPIC_API_KEY", "")))
     if gemini:
+        try:
+            from google import genai
+
+            out["sdk"] = f"google-genai {genai.__version__}"
+        except Exception:
+            pass
         opts = getattr(getattr(client, "_api_client", None), "_http_options", None)
         out["endpoint"] = (getattr(opts, "base_url", "") or "").replace("https://", "").rstrip("/") or None
     try:
