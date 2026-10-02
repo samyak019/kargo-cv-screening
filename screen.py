@@ -167,7 +167,12 @@ def make_client(model: Optional[str] = None) -> Tuple[object, str]:
     if gemini_key:
         from google import genai
 
-        return genai.Client(api_key=gemini_key), model or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        # "AQ." keys are Google Cloud Vertex AI express-mode keys; "AIza" keys are AI Studio keys.
+        # They authenticate against different endpoints. GEMINI_VERTEX=1/0 overrides the guess.
+        flag = os.environ.get("GEMINI_VERTEX", "").strip()
+        vertex = flag == "1" if flag in ("0", "1") else gemini_key.startswith("AQ.")
+        client = genai.Client(vertexai=True, api_key=gemini_key) if vertex else genai.Client(api_key=gemini_key)
+        return client, model or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     if os.environ.get("ANTHROPIC_API_KEY", "").strip():
         import anthropic
 

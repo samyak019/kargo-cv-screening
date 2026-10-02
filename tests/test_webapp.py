@@ -202,3 +202,17 @@ def test_make_client_prefers_gemini(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY")
     with pytest.raises(screen.ModelError):
         screen.make_client()
+
+
+def test_vertex_express_key_detected(monkeypatch):
+    monkeypatch.delenv("GEMINI_VERTEX", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.fake-express-key")
+    client, _ = screen.make_client()
+    assert "aiplatform.googleapis.com" in client._api_client._http_options.base_url
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaFakeStudioKey")
+    client, _ = screen.make_client()
+    assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
+    monkeypatch.setenv("GEMINI_VERTEX", "0")
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.fake-express-key")
+    client, _ = screen.make_client()
+    assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
